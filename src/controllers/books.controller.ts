@@ -70,10 +70,13 @@ export async function uploadBook(req: Request, res: Response) {
       .select("*")
       .single();
 
-    if (bookErr || !book) {
-      console.error(bookErr);
-      return res.status(500).json({ error: "Error creando el libro en la BD" });
-    }
+if (bookErr || !book) {
+  console.error("UPLOAD_BOOK insert error:", bookErr);
+  return res.status(500).json({
+    error: "Error guardando el libro en la BD",
+    supabase: bookErr,
+  });
+}
 
     const bookId = book.id;
 

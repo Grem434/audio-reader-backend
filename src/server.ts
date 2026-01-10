@@ -28,8 +28,8 @@ app.use("/api/books", booksRoutes);
 app.use("/api/books", bookmarksRoutes);
 app.use("/api/books", continueRoutes);
 
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT || 8080);
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`🚀 Server listening on port ${PORT}`);
 });
