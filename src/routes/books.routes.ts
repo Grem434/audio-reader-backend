@@ -8,27 +8,35 @@ import {
   generateAudio,
   recapChapter,
   deleteBook,
-  deleteAudios
+  deleteAudios,
+  getContinue,
+  saveBookmark,
 } from "../controllers/books.controller";
 
 const router = Router();
 const upload = multer({ dest: "uploads/" });
 
 /**
- * LIBRERÍA PÚBLICA:
- * - Listar / subir / borrar libro: permitido SIN x-user-id
- * - Audios / recap / borrar audios: requiere x-user-id (porque es “por usuario”)
+ * Rutas /api/books
+ *
+ * Modelo actual:
+ * - Libros: públicos (lista/leer/borrar por ahora sin RLS dura)
+ * - Audios + bookmarks: por usuario (x-user-id)
  */
 
-// Público
+// Públicos
 router.get("/", listBooks);
 router.post("/upload", upload.single("file"), uploadBook);
-router.get("/:bookId", getBook);
-router.delete("/:bookId", deleteBook);
 
-// Privado por usuario
+// ⚠️ Endpoints por usuario (deben tener x-user-id)
+router.get("/:bookId/continue", getContinue);
+router.post("/:bookId/bookmark", saveBookmark);
 router.post("/:bookId/generate-audio", generateAudio);
 router.post("/:bookId/recap", recapChapter);
 router.delete("/:bookId/audios", deleteAudios);
+
+// Detalle / borrar libro
+router.get("/:bookId", getBook);
+router.delete("/:bookId", deleteBook);
 
 export default router;

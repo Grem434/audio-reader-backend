@@ -10,6 +10,15 @@ import { synthesizeChapter } from "../services/tts";
 import { ensureDir } from "../utils/fs";
 import { getSafeUserId } from "../utils/auth";
 
+function requireUserId(req: Request, res: Response): string {
+  const userId = getSafeUserId(req.header("x-user-id"));
+  if (!userId) {
+    res.status(400).json({ error: "Falta userId válido (x-user-id UUID)" });
+    throw new Error("Missing/invalid x-user-id");
+  }
+  return userId;
+}
+
 /**
  * NOTA IMPORTANTE (modelo actual):
  * - Libros/Capítulos: se pueden tratar como "comunes" (sin filtrar por user_id al leer libro).
@@ -39,7 +48,7 @@ export async function listBooks(req: Request, res: Response) {
 
 export async function uploadBook(req: Request, res: Response) {
   try {
-    const userId = getSafeUserId(req);
+    const userId = requireUserId(req, res);
     const file = (req as any).file;
 
     if (!file) return res.status(400).json({ error: "Falta archivo" });
@@ -104,7 +113,7 @@ if (bookErr || !book) {
 
 export async function getBook(req: Request, res: Response) {
   try {
-    const userId = getSafeUserId(req);
+    const userId = requireUserId(req, res);
     const { bookId } = req.params;
 
     const voice = String(req.query.voice || "alloy");
@@ -163,7 +172,7 @@ export async function getBook(req: Request, res: Response) {
 
 export async function deleteBook(req: Request, res: Response) {
   try {
-    const userId = getSafeUserId(req);
+    const userId = requireUserId(req, res);
     const { bookId } = req.params;
 
     const { data: book, error: bookErr } = await supabase
@@ -200,7 +209,7 @@ export async function deleteBook(req: Request, res: Response) {
 
 export async function recapChapter(req: Request, res: Response) {
   try {
-    const userId = getSafeUserId(req);
+    const userId = requireUserId(req, res);
     const { bookId, chapterId } = req.params;
 
     // (Tu lógica actual aquí)
@@ -214,7 +223,7 @@ export async function recapChapter(req: Request, res: Response) {
 
 export async function deleteAudios(req: Request, res: Response) {
   try {
-    const userId = getSafeUserId(req);
+    const userId = requireUserId(req, res);
     const { bookId } = req.params;
 
     const { error } = await supabase
@@ -247,7 +256,7 @@ export async function deleteAudios(req: Request, res: Response) {
 
 export async function generateAudio(req: Request, res: Response) {
   try {
-    const userId = getSafeUserId(req);
+    const userId = requireUserId(req, res);
     const { bookId, chapterId } = req.params;
 
     const voice = String(req.query.voice || "alloy");
@@ -268,16 +277,23 @@ export async function generateAudio(req: Request, res: Response) {
     ensureDir(outDir);
     const audioPath = path.join(outDir, `chapter-${chapter.index_in_book}-${voice}-${style}.mp3`);
 
-    const audioBuffer = await synthesizeChapter({
-      userId,
+
+
+    const ttsResult: any = await synthesizeChapter({
       bookId,
       chapterIndex: chapter.index_in_book,
       text: chapter.text,
       voice,
-      style
+      style: style as any
     });
 
-    fs.writeFileSync(audioPath, audioBuffer);
+    // synthesizeChapter puede devolver un Buffer/Uint8Array o un objeto { filePath }
+    let finalAudioPath = audioPath;
+    if (ttsResult && typeof ttsResult === "object" && typeof ttsResult.filePath === "string") {
+      finalAudioPath = ttsResult.filePath;
+    } else {
+      fs.writeFileSync(audioPath, ttsResult as any);
+}
 
     // Upsert
     const { error: upErr } = await supabase
@@ -286,7 +302,7 @@ export async function generateAudio(req: Request, res: Response) {
         user_id: userId,
         book_id: bookId,
         chapter_id: chapter.id,
-        audio_path: audioPath,
+        audio_path: finalAudioPath,
         voice,
         style
       });
@@ -296,7 +312,7 @@ export async function generateAudio(req: Request, res: Response) {
       return res.status(500).json({ error: "Error guardando audio en BD" });
     }
 
-    return res.json({ ok: true, audio_path: audioPath });
+    return res.json({ ok: true, audio_path: finalAudioPath });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "Error interno generateAudio" });
@@ -305,7 +321,7 @@ export async function generateAudio(req: Request, res: Response) {
 
 export async function streamChapterAudio(req: Request, res: Response) {
   try {
-    const userId = getSafeUserId(req);
+    const userId = requireUserId(req, res);
     const { bookId, chapterId } = req.params;
 
     const voice = String(req.query.voice || "alloy");
@@ -331,5 +347,97 @@ export async function streamChapterAudio(req: Request, res: Response) {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "Error interno streamChapterAudio" });
+  }
+}
+
+export async function getContinue(req: Request, res: Response) {
+  try {
+    const userId = requireUserId(req, res);
+    const { bookId } = req.params;
+
+    // Último bookmark del usuario para ese libro
+    const { data: bm, error: bmErr } = await supabase
+      .from("bookmarks")
+      .select("id, user_id, book_id, chapter_id, position_seconds, updated_at")
+      .eq("user_id", userId)
+      .eq("book_id", bookId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (bmErr) {
+      console.error(bmErr);
+      return res.status(500).json({ error: "Error obteniendo continue" });
+    }
+
+    if (!bm) {
+      return res.json({ bookmark: null, chapter: null });
+    }
+
+    const { data: chapter, error: chErr } = await supabase
+      .from("chapters")
+      .select("id, book_id, index_in_book, title")
+      .eq("id", bm.chapter_id)
+      .maybeSingle();
+
+    if (chErr) {
+      console.error(chErr);
+      // devolvemos al menos el bookmark
+      return res.json({ bookmark: bm, chapter: null });
+    }
+
+    return res.json({ bookmark: bm, chapter });
+  } catch (e) {
+    // requireUserId ya respondió 400, aquí solo log
+    console.error(e);
+    return res.status(500).json({ error: "Error interno continue" });
+  }
+}
+
+export async function saveBookmark(req: Request, res: Response) {
+  try {
+    const userId = requireUserId(req, res);
+    const { bookId } = req.params;
+
+    const chapterId = String(req.body?.chapterId || "");
+    const positionSecondsRaw = req.body?.positionSeconds;
+
+    const positionSeconds =
+      typeof positionSecondsRaw === "number"
+        ? positionSecondsRaw
+        : Number(positionSecondsRaw);
+
+    if (!chapterId) {
+      return res.status(400).json({ error: "Falta chapterId" });
+    }
+    if (!Number.isFinite(positionSeconds) || positionSeconds < 0) {
+      return res.status(400).json({ error: "positionSeconds inválido" });
+    }
+
+    // Upsert por (user_id, book_id): el último progreso del usuario en ese libro
+    const { data, error } = await supabase
+      .from("bookmarks")
+      .upsert(
+        {
+          user_id: userId,
+          book_id: bookId,
+          chapter_id: chapterId,
+          position_seconds: positionSeconds,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id,book_id" }
+      )
+      .select("id, user_id, book_id, chapter_id, position_seconds, updated_at")
+      .single();
+
+    if (error) {
+      console.error(error);
+      return res.status(500).json({ error: "Error guardando bookmark" });
+    }
+
+    return res.json({ bookmark: data });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Error interno saveBookmark" });
   }
 }
