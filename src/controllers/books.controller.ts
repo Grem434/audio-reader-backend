@@ -57,7 +57,7 @@ export async function uploadBook(req: Request, res: Response) {
     const { data: bookData, error: bookError } = await supabase
       .from("books")
       .insert({
-        user_id: ownerUserId,
+        user_id: userId,
         title: bookTitle,
         original_filename: originalFilename,
         file_path: localPath
@@ -313,7 +313,7 @@ export async function generateAudio(req: Request, res: Response) {
         // 4) En vez de actualizar chapters.audio_path (que es 1 solo), hacemos upsert en chapter_audios
         const { error: upsertError } = await supabase.from("chapter_audios").upsert(
           {
-            user_id: ownerUserId,
+            user_id: userId,
             book_id: bookId,
             chapter_id: chapter.id,
             voice,
@@ -596,8 +596,6 @@ export async function recapChapter(req: Request, res: Response) {
   }
 }
 
-import type { Request, Response } from "express";
-import { supabase } from "../services/supabase";
 
 /** Helper: exige x-user-id solo donde toca */
 function requireUserId(req: Request, res: Response): string | null {
@@ -654,7 +652,7 @@ export async function saveBookmark(req: Request, res: Response) {
   }
 
   const payload = {
-    user_id: ownerUserId,
+    user_id: userId,
     book_id: bookId,
     voice,
     style,
@@ -724,29 +722,3 @@ export async function generateMissing(req: Request, res: Response) {
 }
 // Genera TODOS los audios que falten (para un user/voz/estilo).
 // Reutiliza generateAudio, que ya evita regenerar si existe en la tabla `audios`.
-export async function generateMissing(req: Request, res: Response) {
-  const userId = req.headers["x-user-id"] as string | undefined;
-  if (!userId)
-    return res.status(400).json({ error: "Falta userId (x-user-id) para pruebas" });
-
-  const bookId = req.params.bookId;
-  const voice = (req.body?.voice ?? "alloy") as string;
-  const style = (req.body?.style ?? "neutral") as string;
-
-  const { data: chapters, error } = await supabase
-    .from("chapters")
-    .select("id")
-    .eq("book_id", bookId);
-
-  if (error) return res.status(500).json({ error: error.message });
-
-  const maxIndex = Math.max(0, (chapters?.length ?? 1) - 1);
-
-  // Reusamos el mismo handler
-  (req as any).body = { startIndex: 0, endIndex: maxIndex, voice, style };
-  return generateAudio(req, res);
-}
-
-// Alias por compatibilidad con el frontend: generateAudioRange -> generateAudio
-export const generateAudioRange = generateAudio;
-
