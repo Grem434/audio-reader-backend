@@ -341,7 +341,6 @@ export async function generateAudio(req: Request, res: Response) {
             voice: safeVoice,
             style: safeStyle,
             audio_path: finalAudioPath,
-            updated_at: new Date().toISOString(),
           },
           { onConflict: "user_id,book_id,chapter_id,voice,style" }
         );
