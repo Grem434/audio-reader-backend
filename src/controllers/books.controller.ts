@@ -238,7 +238,7 @@ export async function deleteAudios(req: Request, res: Response) {
     }
 
     // Borrar también carpeta local si procede
-    const baseDir = path.join(process.cwd(), "data", "audio", userId, bookId);
+    const baseDir = path.join(process.cwd(), "data", "audio", (userId ?? "anon"), bookId);
     if (fs.existsSync(baseDir)) {
       try {
         fs.rmSync(baseDir, { recursive: true, force: true });
@@ -256,68 +256,111 @@ export async function deleteAudios(req: Request, res: Response) {
 
 export async function generateAudio(req: Request, res: Response) {
   try {
-    const userId = requireUserId(req, res);
-    const { bookId, chapterId } = req.params;
+    const userId = getSafeUserId(req);
 
-    const voice = String(req.query.voice || "alloy");
-    const style = String(req.query.style || "neutral");
+    const { bookId } = req.params;
+    // Frontend envía startIndex/endIndex en el body
+    const {
+      startIndex,
+      endIndex,
+      voice = "alloy",
+      style = "neutral",
+      // compat: aceptar chapterIndex si llega desde algún cliente viejo
+      chapterIndex,
+    } = (req.body ?? {}) as {
+      startIndex?: number;
+      endIndex?: number;
+      chapterIndex?: number;
+      voice?: string;
+      style?: string;
+    };
 
-    // Leer capítulo
-    const { data: chapter, error: chErr } = await supabase
-      .from("chapters")
-      .select("id, book_id, index_in_book, text")
-      .eq("id", chapterId)
-      .eq("book_id", bookId)
-      .single();
+    const fromIndex = typeof startIndex === "number" ? startIndex : chapterIndex;
+    const toIndex = typeof endIndex === "number" ? endIndex : chapterIndex;
 
-    if (chErr || !chapter) return res.status(404).json({ error: "Capítulo no encontrado" });
-
-    // Generar audio
-    const outDir = path.join(process.cwd(), "data", "audio", userId, bookId);
-    ensureDir(outDir);
-    const audioPath = path.join(outDir, `chapter-${chapter.index_in_book}-${voice}-${style}.mp3`);
-
-
-
-    const ttsResult: any = await synthesizeChapter({
-      bookId,
-      chapterIndex: chapter.index_in_book,
-      text: chapter.text,
-      voice,
-      style: style as any
-    });
-
-    // synthesizeChapter puede devolver un Buffer/Uint8Array o un objeto { filePath }
-    let finalAudioPath = audioPath;
-    if (ttsResult && typeof ttsResult === "object" && typeof ttsResult.filePath === "string") {
-      finalAudioPath = ttsResult.filePath;
-    } else {
-      fs.writeFileSync(audioPath, ttsResult as any);
-}
-
-    // Upsert
-    const { error: upErr } = await supabase
-      .from("chapter_audios")
-      .upsert({
-        user_id: userId,
-        book_id: bookId,
-        chapter_id: chapter.id,
-        audio_path: finalAudioPath,
-        voice,
-        style
-      });
-
-    if (upErr) {
-      console.error(upErr);
-      return res.status(500).json({ error: "Error guardando audio en BD" });
+    if (typeof fromIndex !== "number" || typeof toIndex !== "number") {
+      return res.status(400).json({ error: "Faltan startIndex/endIndex (o chapterIndex)" });
     }
 
-    return res.json({ ok: true, audio_path: finalAudioPath });
+    // Traemos todos los capítulos del rango
+    const { data: chapters, error: chErr } = await supabase
+      .from("chapters")
+      .select("id, book_id, index_in_book, text")
+      .eq("book_id", bookId)
+      .gte("index_in_book", Math.min(fromIndex, toIndex))
+      .lte("index_in_book", Math.max(fromIndex, toIndex))
+      .order("index_in_book", { ascending: true });
+
+    if (chErr) {
+      console.error(chErr);
+      return res.status(500).json({ error: "Error obteniendo capítulos" });
+    }
+    if (!chapters || chapters.length === 0) {
+      return res.status(404).json({ error: "Capítulo no encontrado" });
+    }
+
+    const outDir = path.join(process.cwd(), "data", "audio", (userId ?? "anon"), bookId);
+    ensureDir(outDir);
+
+    const results: Array<{ chapterId: string; index: number; audioPath: string }> = [];
+
+    for (const ch of chapters as any[]) {
+      const index = ch.index_in_book as number;
+
+      const safeVoice = String(voice);
+      const safeStyle = String(style);
+
+      const fileName = `chapter_${index}_${safeVoice}_${safeStyle}.mp3`;
+      const audioPath = path.join(outDir, fileName);
+
+      // Generamos audio
+      const ttsResult = await synthesizeChapter({
+        bookId,
+        chapterIndex: index,
+        text: ch.text,
+        voice: safeVoice as any,
+        style: safeStyle as any,
+      });
+
+      // synthesizeChapter puede devolver un Buffer/Uint8Array o un objeto { filePath }
+      let finalAudioPath = audioPath;
+      if (ttsResult && typeof ttsResult === "object" && typeof (ttsResult as any).filePath === "string") {
+        finalAudioPath = (ttsResult as any).filePath;
+      } else {
+        fs.writeFileSync(audioPath, ttsResult as any);
+      }
+
+      // Guardamos/upsert en tabla chapter_audios
+      const { error: upErr } = await supabase
+        .from("chapter_audios")
+        .upsert(
+          {
+            user_id: userId,
+            book_id: bookId,
+            chapter_id: ch.id,
+            voice: safeVoice,
+            style: safeStyle,
+            audio_path: finalAudioPath,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id,book_id,chapter_id,voice,style" }
+        );
+
+      if (upErr) {
+        console.error(upErr);
+        return res.status(500).json({ error: "Error guardando audio en BD" });
+      }
+
+      results.push({ chapterId: ch.id, index, audioPath: finalAudioPath });
+    }
+
+    return res.json({ ok: true, generated: results.length, results });
   } catch (e) {
     console.error(e);
-    return res.status(500).json({ error: "Error interno generateAudio" });
+    return res.status(500).json({ error: "Error generando audio" });
   }
 }
+
 
 export async function streamChapterAudio(req: Request, res: Response) {
   try {
