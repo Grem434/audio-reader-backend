@@ -127,7 +127,6 @@ export async function getBook(req: Request, res: Response) {
       .from("books")
       .select("*")
       .eq("id", bookId)
-      .eq("user_id", userId)
       .single();
 
     if (bookErr || !book) {
