@@ -145,7 +145,6 @@ export async function getBook(req: Request, res: Response) {
     const { data: audios, error: audErr } = await supabase
       .from("chapter_audios")
       .select("chapter_id, audio_path")
-      .eq("user_id", userId)
       .eq("book_id", bookId)
       .eq("voice", voice)
       .eq("style", style);
@@ -184,7 +183,7 @@ function moveOrCopyFile(from: string, to: string) {
       fs.copyFileSync(from, to);
       try {
         fs.unlinkSync(from);
-      } catch {}
+      } catch { }
       return;
     }
   }
@@ -213,9 +212,9 @@ export async function generateAudio(req: Request, res: Response) {
 
     const viewerUserId = userIdFromHeader as string | null;
 
-if (!viewerUserId) {
-  return res.status(401).json({ error: "Falta x-user-id" });
-}
+    if (!viewerUserId) {
+      return res.status(401).json({ error: "Falta x-user-id" });
+    }
 
     const body = req.body || {};
     const voice: string = body.voice || "marin";
@@ -241,7 +240,7 @@ if (!viewerUserId) {
       .single();
 
     if (bookError || !book) return res.status(404).json({ error: "Libro no encontrado" });
-    
+
     const { data: chapters, error: chaptersError } = await supabase
       .from("chapters")
       .select("id, index_in_book, text")
