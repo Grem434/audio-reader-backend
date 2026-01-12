@@ -441,18 +441,21 @@ export async function deleteAudios(req: Request, res: Response) {
     const voice = req.query.voice ? String(req.query.voice) : null;
     const style = req.query.style ? String(req.query.style) : null;
 
-    // 1) asegura que el libro existe y es del usuario
+    // 1) asegura que el libro existe (ya no exigimos ser dueño)
     const { data: book, error: bookErr } = await supabase
       .from("books")
       .select("id")
       .eq("id", bookId)
-      .eq("user_id", userId)
+      // .eq("user_id", userId) // <-- QUITADO para que sea público
       .single();
 
     if (bookErr || !book) return res.status(404).json({ error: "Libro no encontrado" });
 
-    // 2) DB delete en chapter_audios con filtros
-    let q = supabase.from("chapter_audios").delete().eq("book_id", bookId).eq("user_id", userId);
+    // 2) DB delete en chapter_audios con filtros (SIN user_id)
+    let q = supabase.from("chapter_audios").delete().eq("book_id", bookId);
+    // if (voice) ...
+    // Eliminamos el filtro de user_id
+    // q = q.eq("user_id", userId); 
     if (voice) q = q.eq("voice", voice);
     if (style) q = q.eq("style", style);
     const { error: delErr } = await q;
