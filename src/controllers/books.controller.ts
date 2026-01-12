@@ -313,7 +313,7 @@ export async function generateAudio(req: Request, res: Response) {
         // 4) En vez de actualizar chapters.audio_path (que es 1 solo), hacemos upsert en chapter_audios
         const { error: upsertError } = await supabase.from("chapter_audios").upsert(
           {
-            user_id: userId,
+            user_id: ownerUserId,
             book_id: bookId,
             chapter_id: chapter.id,
             voice,
