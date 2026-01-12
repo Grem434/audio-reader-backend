@@ -118,8 +118,9 @@ export async function getBook(req: Request, res: Response) {
     const userId = req.header("x-user-id");
     const { bookId } = req.params;
 
-    const voice = String(req.query.voice || "marin");
-    const style = String(req.query.style || "learning");
+    const voice = String(req.query.voice || "alloy"); // (o "marin" si prefieres)
+    const rawStyle = String(req.query.style || "learning");
+    const style: "learning" | "narrative" = rawStyle === "narrative" ? "narrative" : "learning";
 
     if (!userId) return res.status(401).json({ error: "Falta x-user-id" });
 
