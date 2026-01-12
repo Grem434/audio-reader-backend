@@ -210,11 +210,11 @@ export async function generateAudio(req: Request, res: Response) {
       return res.status(500).json({ error: "Error leyendo el libro en la BD" });
     }
 
-    const ownerUserId = (userIdFromHeader ?? bookRow?.user_id ?? null) as string | null;
+    const viewerUserId = userIdFromHeader as string | null;
 
-    if (!ownerUserId) {
-      return res.status(401).json({ error: "Falta ownerUserId (x-user-id) y el libro no tiene owner" });
-    }
+if (!viewerUserId) {
+  return res.status(401).json({ error: "Falta x-user-id" });
+}
 
     const body = req.body || {};
     const voice: string = body.voice || "marin";
@@ -240,8 +240,7 @@ export async function generateAudio(req: Request, res: Response) {
       .single();
 
     if (bookError || !book) return res.status(404).json({ error: "Libro no encontrado" });
-    if (book.user_id !== ownerUserId) return res.status(403).json({ error: "No tienes acceso a este libro" });
-
+    
     const { data: chapters, error: chaptersError } = await supabase
       .from("chapters")
       .select("id, index_in_book, text")
@@ -312,7 +311,7 @@ export async function generateAudio(req: Request, res: Response) {
         // 4) En vez de actualizar chapters.audio_path (que es 1 solo), hacemos upsert en chapter_audios
         const { error: upsertError } = await supabase.from("chapter_audios").upsert(
           {
-            user_id: ownerUserId,
+            user_id: viewerUserId,
             book_id: bookId,
             chapter_id: chapter.id,
             voice,
