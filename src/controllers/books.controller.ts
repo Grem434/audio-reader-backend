@@ -98,13 +98,9 @@ export async function uploadBook(req: Request, res: Response) {
 }
 
 export async function listBooks(req: Request, res: Response) {
-  const userId = req.header("x-user-id");
-  if (!userId) return res.status(401).json({ error: "Falta x-user-id" });
-
   const { data, error } = await supabase
     .from("books")
     .select("*")
-    .eq("user_id", userId)
     .order("created_at", { ascending: false });
 
   if (error) {
