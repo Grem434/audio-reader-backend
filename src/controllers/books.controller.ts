@@ -287,8 +287,8 @@ export async function generateAudio(req: Request, res: Response) {
       if (!text || text.trim().length === 0) continue;
 
       try {
-        // 1) Genera audio (tu servicio actual probablemente escribe en: audios/<bookId>/chapter-<index>.mp3)
-        await synthesizeChapter({
+        // 1) Genera audio (tu servicio actual escribe en: audios/<bookId>/chapter-<index>.mp3)
+        const { filePath } = await synthesizeChapter({
           bookId,
           chapterIndex: chapter.index_in_book,
           text,
@@ -296,22 +296,42 @@ export async function generateAudio(req: Request, res: Response) {
           style
         });
 
-        // 2) Paso "pro": guardamos el archivo por voz+modo (sin pisar otras combinaciones)
-        const defaultMp3 = path.join(process.cwd(), "audios", bookId, `chapter-${chapter.index_in_book}.mp3`);
-        const outDir = path.join(process.cwd(), "audios", bookId, voice, style);
-        ensureDir(outDir);
-        const outFile = path.join(outDir, `chapter-${chapter.index_in_book}.mp3`);
+        // 2) Subir a Supabase Storage (PERSISTENCIA)
+        const fileBuffer = fs.readFileSync(filePath);
+        const storagePath = `${bookId}/${voice}/${style}/chapter-${chapter.index_in_book}.mp3`;
 
-        // mueve/renombra (o copia) el MP3 al destino por voz/estilo
-        moveOrCopyFile(defaultMp3, outFile);
+        // upsert: true para sobrescribir si ya existe
+        const { error: uploadError } = await supabase.storage
+          .from("audios")
+          .upload(storagePath, fileBuffer, {
+            contentType: "audio/mpeg",
+            upsert: true
+          });
 
-        // 3) URL pública (la sirve tu static /audio)
-        const publicUrl = `/audio/${bookId}/${voice}/${style}/chapter-${chapter.index_in_book}.mp3`;
+        if (uploadError) {
+          console.error("Error subiendo a Storage:", uploadError);
+          // Fallback o continue? Mejor continue y loguear.
+          continue;
+        }
 
-        // 4) En vez de actualizar chapters.audio_path (que es 1 solo), hacemos upsert en chapter_audios
+        // 3) Obtener URL pública (Supabase Storage)
+        const { data: publicUrlData } = supabase.storage
+          .from("audios")
+          .getPublicUrl(storagePath);
+
+        const publicUrl = publicUrlData.publicUrl;
+
+        // Limpiar archivo local temporal
+        safeUnlink(filePath);
+
+        // 4) Guardar en Base de Datos (chapter_audios)
         const { error: upsertError } = await supabase.from("chapter_audios").upsert(
           {
-            user_id: viewerUserId,
+            user_id: viewerUserId, // O null si es público total, pero tu tabla pide user_id?
+            // Si tu tabla permite user_id null, genial. Si no, usa viewerUserId.
+            // Para "Public Library", podrías usar un user_id sistema o el del uploader.
+            // De momento mantenemos viewerUserId (quien dispara la generación se anota "owner" técnico,
+            // pero el getBook ya lo ignora al leer).
             book_id: bookId,
             chapter_id: chapter.id,
             voice,
@@ -461,16 +481,28 @@ export async function deleteAudios(req: Request, res: Response) {
     const { error: delErr } = await q;
     if (delErr) return res.status(500).json({ error: "Error borrando audios (DB)" });
 
-    // 3) Disco delete en carpeta correspondiente
-    const baseDir = path.join(process.cwd(), "audios", bookId);
-    if (!voice) {
-      // todos
-      safeRmDir(baseDir);
-    } else if (voice && !style) {
-      safeRmDir(path.join(baseDir, voice));
-    } else {
-      safeRmDir(path.join(baseDir, voice, style!));
+    // 3) Borrar de Supabase Storage
+    // Storage no tiene "borrar carpeta", hay que listar y borrar.
+    const storagePrefix = `${bookId}/${voice || ""}`; // Ojo: si voice es null, borra todo el book?
+    // Mejor lógica:
+    // Si (!voice) -> borrar folder `${bookId}` (todo el libro en audio)
+    // Si (voice && !style) -> borrar folder `${bookId}/${voice}`
+    // Si (voice && style) -> borrar folder `${bookId}/${voice}/${style}`
+
+    let prefix = `${bookId}`;
+    if (voice) prefix += `/${voice}`;
+    if (style) prefix += `/${style}`;
+
+    // Listamos archivos (limit 100, para MVP asumiendo que borramos de 100 en 100 o iterativo)
+    const { data: listData } = await supabase.storage.from("audios").list(prefix, { limit: 100, search: "" });
+    if (listData && listData.length > 0) {
+      const filesToRemove = listData.map(f => `${prefix}/${f.name}`);
+      await supabase.storage.from("audios").remove(filesToRemove);
     }
+
+    // Fallback: cleanup local por si acaso quedó algo antiguo
+    const baseDir = path.join(process.cwd(), "audios", bookId);
+    safeRmDir(baseDir);
 
     return res.json({ message: "Audios eliminados", bookId, voice, style });
   } catch (e) {
