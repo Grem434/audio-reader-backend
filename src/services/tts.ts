@@ -18,9 +18,9 @@ const openai = new OpenAI({
 function buildInstructions(style: TtsStyle): string {
   if (style === "learning") {
     // Mantén esto corto (también cuenta en tokens).
-    return "Español neutro. Ritmo claro y pausado. Pronuncia con claridad. Pausas naturales.";
+    return "Español de España (Castellano). Ritmo claro y pausado. Pronuncia con claridad. Pausas naturales.";
   }
-  return "Español neutro. Tono narrativo fluido y natural. Entonación agradable. Pausas naturales.";
+  return "Español de España (Castellano). Tono narrativo fluido y natural. Entonación agradable. Pausas naturales.";
 }
 
 /**
