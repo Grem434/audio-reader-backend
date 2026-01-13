@@ -118,12 +118,9 @@ export async function getBook(req: Request, res: Response) {
     const userId = req.header("x-user-id");
     const { bookId } = req.params;
 
-    const voice = String(req.query.voice || "alloy"); // (o "marin" si prefieres)
-    const rawStyle = String(req.query.style || "learning");
-    const style: "learning" | "narrative" = rawStyle === "narrative" ? "narrative" : "learning";
-
     if (!userId) return res.status(401).json({ error: "Falta x-user-id" });
 
+    // 1. Fetch Book
     const { data: book, error: bookErr } = await supabase
       .from("books")
       .select("*")
@@ -134,6 +131,7 @@ export async function getBook(req: Request, res: Response) {
       return res.status(404).json({ error: "Libro no encontrado" });
     }
 
+    // 2. Fetch Chapters (ordered)
     const { data: chapters, error: chErr } = await supabase
       .from("chapters")
       .select("id, book_id, index_in_book, title")
@@ -142,24 +140,43 @@ export async function getBook(req: Request, res: Response) {
 
     if (chErr) return res.status(500).json({ error: "Error cargando capítulos" });
 
+    // 3. Fetch ALL audios for this book (no voice filter)
+    // We order by created_at desc so the first one we find is the "latest"
     const { data: audios, error: audErr } = await supabase
       .from("chapter_audios")
-      .select("chapter_id, audio_path")
+      .select("chapter_id, audio_path, voice, style, created_at")
       .eq("book_id", bookId)
-      .eq("voice", voice)
-      .eq("style", style);
+      .order("created_at", { ascending: false });
 
     if (audErr) return res.status(500).json({ error: "Error cargando audios" });
 
-    const audioMap = new Map<string, string>();
-    for (const a of audios || []) audioMap.set(a.chapter_id, a.audio_path);
+    // 4. Map 'Latest Audio' to each chapter
+    const audioMap = new Map<string, any>();
+    // Since 'audios' is ordered desc by created_at, the first time we see a chapter_id, that's the latest one using Map.set (or check has)
+    // Actually Map.set overwrites. We want the FIRST one.
+    // So we iterate and only set if NOT has.
+    for (const a of audios || []) {
+      if (!audioMap.has(a.chapter_id)) {
+        audioMap.set(a.chapter_id, a);
+      }
+    }
 
-    const chaptersWithAudio = (chapters || []).map((c: any) => ({
-      ...c,
-      audio_path: audioMap.get(c.id) || null
-    }));
+    const chaptersWithAudio = (chapters || []).map((c: any) => {
+      const bestAudio = audioMap.get(c.id);
+      return {
+        ...c,
+        audio_path: bestAudio ? bestAudio.audio_path : null,
+        // Optional: pass back which voice it is, so UI can show "Listening to Onyx"
+        voice: bestAudio?.voice || null,
+        style: bestAudio?.style || null
+      };
+    });
 
-    return res.json({ book, chapters: chaptersWithAudio, voice, style });
+    return res.json({
+      book,
+      chapters: chaptersWithAudio,
+      // We no longer enforce a global "voice" filter return
+    });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: "Error interno getBook" });
