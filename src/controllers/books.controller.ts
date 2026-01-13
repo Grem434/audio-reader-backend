@@ -298,7 +298,8 @@ export async function generateAudio(req: Request, res: Response) {
 
         // 2) Subir a Supabase Storage (PERSISTENCIA)
         const fileBuffer = fs.readFileSync(filePath);
-        const storagePath = `${bookId}/${voice}/${style}/chapter-${chapter.index_in_book}.mp3`;
+        const timestamp = Date.now();
+        const storagePath = `${bookId}/${voice}/${style}/chapter-${chapter.index_in_book}-${timestamp}.mp3`;
 
         // upsert: true para sobrescribir si ya existe
         const { error: uploadError } = await supabase.storage
