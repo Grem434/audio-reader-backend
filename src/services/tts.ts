@@ -160,7 +160,9 @@ export async function synthesizeChapter(args: SynthesizeArgs): Promise<{ filePat
 
     // Muy importante: NO metas instrucciones largas ni prompts gigantes.
     // Puedes “prefijar” instrucciones de forma ligera:
-    const input = `${instructions}\n\n${chunkText}`;
+    // Modificación: NO inyectamos instrucciones porque la API de OpenAI las lee en voz alta.
+    // Solo enviamos el texto del libro.
+    const input = chunkText;
 
     const mp3 = await openai.audio.speech.create({
       model,
